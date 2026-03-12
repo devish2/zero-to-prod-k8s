@@ -229,7 +229,7 @@ APP_PORT=5000
 
 This project is structured as a 2-week, 4-sprint plan.
 
-### Sprint 1 — Docker Depth *(Days 1–4)*
+### Sprint 1 — Docker Depth
 
 **Goal:** Solid container builds, minimal images, non-root, healthchecks.
 
@@ -252,7 +252,7 @@ make scan
 
 ---
 
-### Sprint 2 — Kubernetes Fundamentals *(Days 5–8)*
+### Sprint 2 — Kubernetes Fundamentals
 
 **Goal:** Cluster up, TLS Ingress, StatefulSet DB, probes, HPA, RBAC, NetworkPolicies.
 
@@ -287,7 +287,7 @@ kubectl get hpa -n uptime-dev -w
 
 ---
 
-### Sprint 3 — Local CI/CD *(Days 9–12)*
+### Sprint 3 — Local CI/CD
 
 **Goal:** Pipeline builds, scans, pushes to local registry, deploys to K8s.
 
@@ -313,7 +313,7 @@ lint → test → build → scan → push → deploy → smoke → [rollback on 
 
 ---
 
-### Sprint 4 — Reliability & Policy *(Days 13–14)*
+### Sprint 4 — Reliability & Policy 
 
 **Goal:** PDB prevents outage during drain, Kyverno gate blocks bad manifests, blue/green with zero downtime.
 
