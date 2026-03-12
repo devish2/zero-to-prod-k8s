@@ -1,0 +1,6 @@
+checks:
+addAllBuiltIn: true
+exclude:
+- "unset-cpu-requirements"
+- "no-read-only-root-fs"
+- "dangling-service"

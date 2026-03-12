@@ -1,0 +1,5 @@
+# Hadolint configuration
+# Rules to ignore:
+# - DL3008: apt-get version pinning (relaxed for tutorial)
+# - DL3018: apk version pinning
+failure-threshold: warning

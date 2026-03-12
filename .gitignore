@@ -205,3 +205,22 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Secrets — NEVER commit
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Kubernetes
+kubeconfig
+certs/
+
+# Editor
+.idea/
+.vscode/
+.DS_Store
