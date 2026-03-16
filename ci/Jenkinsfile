@@ -1,0 +1,75 @@
+pipeline {
+agent any
+environment {
+REGISTRY = 'localhost:5001/uptime'
+NAMESPACE = 'uptime-dev'
+GIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+}
+options {
+timeout(time: 30, unit: 'MINUTES')
+buildDiscarder(logRotator(numToKeepStr: '10'))
+}
+stages {
+stage('Lint') {
+steps {
+sh 'docker run --rm -i hadolint/hadolint < app/Dockerfile'
+sh 'docker run --rm -v $(pwd):/repo stackrox/kube-linter lint /repo/k8s/base'
+}
+}
+stage('Test') {
+steps {
+    sh 'DOCKER_BUILDKIT=1 docker build --target builder --no-cache -t
+app-test:${GIT_SHA} ./app'
+sh '''docker run --rm -v $(pwd)/test-results:/results app-test:${GIT_SHA} \
+python -m pytest test_main.py -v --junitxml=/results/report.xml'''
+}
+post { always { junit 'test-results/report.xml' } }
+}
+stage('Build') {
+steps {
+sh 'DOCKER_BUILDKIT=1 docker build -t ${REGISTRY}/app:${GIT_SHA} ./app'
+sh 'DOCKER_BUILDKIT=1 docker build -t ${REGISTRY}/edge:${GIT_SHA} ./edge'
+sh 'DOCKER_BUILDKIT=1 docker build -t ${REGISTRY}/metrics:${GIT_SHA}
+./jobs/metrics'
+sh 'DOCKER_BUILDKIT=1 docker build -t ${REGISTRY}/log-parser:${GIT_SHA}
+./jobs/log-parser'
+sh 'DOCKER_BUILDKIT=1 docker build -t ${REGISTRY}/alerts:${GIT_SHA} ./jobs/alerts'
+}
+}
+stage('Scan') {
+steps {
+sh '''docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+aquasec/trivy image --exit-code 1 --severity HIGH,CRITICAL \
+${REGISTRY}/app:${GIT_SHA}'''
+}
+}
+stage('Push') {
+steps {
+sh 'docker push ${REGISTRY}/app:${GIT_SHA}'
+sh 'docker push ${REGISTRY}/edge:${GIT_SHA}'
+sh 'docker push ${REGISTRY}/metrics:${GIT_SHA}'
+sh 'docker push ${REGISTRY}/log-parser:${GIT_SHA}'
+sh 'docker push ${REGISTRY}/alerts:${GIT_SHA}'
+}
+}
+stage('Deploy') {
+steps {
+sh '''cd k8s/overlays/dev
+kustomize edit set image localhost:5001/uptime/app=${REGISTRY}/app:${GIT_SHA}
+kubectl apply -k .
+kubectl rollout status deployment/app -n ${NAMESPACE} --timeout=120s'''
+}
+}
+stage('Smoke') {
+steps { sh 'bash scripts/smoke.sh' }
+}
+}
+post {
+failure {
+sh 'kubectl rollout undo deployment/app -n ${NAMESPACE} || true'
+}
+always {
+sh 'docker image prune -f || true'
+}
+}
+}
