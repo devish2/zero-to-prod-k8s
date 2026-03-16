@@ -1,6 +1,6 @@
 <div align="center">
 
-# Zero-To-Prod-K8S
+# zero-to-prod-k8s
 
 **Containerised Uptime Stack on Kubernetes with Local CI/CD**
 
