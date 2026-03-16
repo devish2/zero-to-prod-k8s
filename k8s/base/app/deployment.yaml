@@ -3,41 +3,60 @@ kind: Deployment
 metadata:
   name: app
   namespace: uptime-dev
+  labels:
+    app: flask-app
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: flask-app }
-strategy:
-  type: RollingUpdate
-  rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
-template:
-  metadata:
-    labels: { app: flask-app }
-  spec:
-  serviceAccountName: app-sa
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 10001
-terminationGracePeriodSeconds: 15
-containers:
-  - name: app
-    image: localhost:5001/uptime/app:latest
-    ports: [{ containerPort: 5000 }]
-    resources:
-      requests: { cpu: 100m, memory: 128Mi }
-      limits: { cpu: 500m, memory: 256Mi }
-    readinessProbe:
-      httpGet: { path: /health, port: 5000 }
-      initialDelaySeconds: 5
-      periodSeconds: 10
-    livenessProbe:
-      httpGet: { path: /health, port: 5000 }
-      initialDelaySeconds: 15
-      periodSeconds: 15
-      failureThreshold: 3
-lifecycle:
-preStop:
-exec:
-      command: ["/bin/sh", "-c", "sleep 5"]
-envFrom:
-- secretRef: { name: app-secret }
+    matchLabels:
+      app: flask-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: flask-app
+    spec:
+      serviceAccountName: app-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: app
+          image: localhost:5001/uptime/app:latest
+          ports:
+            - containerPort: 5000
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+          envFrom:
+            - secretRef:
+                name: app-secret

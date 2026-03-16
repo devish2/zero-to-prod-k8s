@@ -1,46 +1,90 @@
-# Default deny ALL in namespace
+# Default deny ALL ingress + egress
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: default-deny-all, namespace: uptime-dev }
+metadata:
+  name: default-deny-all
+  namespace: uptime-dev
 spec:
-podSelector: {}
-policyTypes: [Ingress, Egress]
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
 ---
-# ingress-nginx and edge → app
+# Allow ingress-nginx and edge → app
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: allow-ingress-to-app, namespace: uptime-dev }
+metadata:
+  name: allow-ingress-to-app
+  namespace: uptime-dev
 spec:
-podSelector: { matchLabels: { app: flask-app } }
-policyTypes: [Ingress]
-ingress:
-- from:
-- namespaceSelector:
-  matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
-- from:
-  - podSelector: { matchLabels: { app: edge } }
+  podSelector:
+    matchLabels:
+      app: flask-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+    - from:
+        - podSelector:
+            matchLabels:
+              app: edge
 ---
-# app and jobs → postgres
+# Allow app → Postgres
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: allow-to-db, namespace: uptime-dev }
+metadata:
+  name: allow-app-to-db
+  namespace: uptime-dev
 spec:
-podSelector: { matchLabels: { app: postgres } }
-policyTypes: [Ingress]
-ingress:
-- from: [{ podSelector: { matchLabels: { app: flask-app } } }]
-  ports: [{ port: 5432 }]
-- from: [{ podSelector: { matchLabels: { app: metrics-job } } }]
-ports: [{ port: 5432 }]
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: flask-app
+      ports:
+        - port: 5432
+---
+# Allow jobs → Postgres
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-jobs-to-db
+  namespace: uptime-dev
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: metrics-job
+      ports:
+        - port: 5432
 ---
 # Allow DNS egress for all pods
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: allow-dns-egress, namespace: uptime-dev }
+metadata:
+  name: allow-dns-egress
+  namespace: uptime-dev
 spec:
-podSelector: {}
-policyTypes: [Egress]
-egress:
-- ports:
-- { port: 53, protocol: UDP }
-- { port: 53, protocol: TCP }
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

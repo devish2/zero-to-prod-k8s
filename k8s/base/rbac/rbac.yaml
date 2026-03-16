@@ -1,34 +1,55 @@
+# ── ServiceAccounts ──────────────────────────────────────────
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: app-sa, namespace: uptime-dev }
+metadata:
+  name: app-sa
+  namespace: uptime-dev
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: db-sa, namespace: uptime-dev }
+metadata:
+  name: db-sa
+  namespace: uptime-dev
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: jobs-sa, namespace: uptime-dev }
+metadata:
+  name: jobs-sa
+  namespace: uptime-dev
 automountServiceAccountToken: false
+
 ---
+# ── Role ─────────────────────────────────────────────────────
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: jobs-role, namespace: uptime-dev }
+metadata:
+  name: jobs-role
+  namespace: uptime-dev
 rules:
-- apiGroups: [""]
-resources: [pods, pods/log]
-verbs: [get, list, watch]
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - pods/log
+    verbs:
+      - get
+      - list
+      - watch
+
 ---
+# ── RoleBinding ───────────────────────────────────────────────
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: { name: jobs-rolebinding, namespace: uptime-dev }
+metadata:
+  name: jobs-rolebinding
+  namespace: uptime-dev
 subjects:
-- kind: ServiceAccount
-name: jobs-sa
-namespace: uptime-dev
+  - kind: ServiceAccount
+    name: jobs-sa
+    namespace: uptime-dev
 roleRef:
   kind: Role
   name: jobs-role
-apiGroup: rbac.authorization.k8s.io
+  apiGroup: rbac.authorization.k8s.io
