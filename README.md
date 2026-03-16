@@ -1,200 +1,170 @@
 <div align="center">
 
-# 🚀 zero-to-prod-k8s
+# Zero-To-Prod-K8S
 
-### Containerised Uptime Stack on Kubernetes with Local CI/CD
+**Containerised Uptime Stack on Kubernetes with Local CI/CD**
 
-*A production-grade DevOps project running entirely offline — no cloud required.*
+*Production-grade DevOps project — fully offline, no cloud required.*
 
-[![Made with Docker](https://img.shields.io/badge/Made%20with-Docker-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docker.com)
-[![Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
-[![kind](https://img.shields.io/badge/Cluster-kind-F5A800?style=flat-square&logo=kubernetes&logoColor=white)](https://kind.sigs.k8s.io)
+[![Docker](https://img.shields.io/badge/Docker-24+-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docker.com)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-kind-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kind.sigs.k8s.io)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?style=flat-square&logo=postgresql&logoColor=white)](https://postgresql.org)
 [![Jenkins](https://img.shields.io/badge/CI%2FCD-Jenkins-D24939?style=flat-square&logo=jenkins&logoColor=white)](https://jenkins.io)
-[![Python](https://img.shields.io/badge/App-Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791?style=flat-square&logo=postgresql&logoColor=white)](https://postgresql.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+[![Kyverno](https://img.shields.io/badge/Policy-Kyverno-1A6BAD?style=flat-square)](https://kyverno.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
 
 <br/>
 
-[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Project Structure](#-project-structure) · [Sprints](#-sprints) · [Prerequisites](#-prerequisites)
+[Overview](#overview) · [Architecture](#architecture) · [Prerequisites](#prerequisites) · [Setup](#setup) · [Sprints](#sprints) · [Common Errors & Fixes](#common-errors--fixes) · [Makefile Reference](#makefile-reference)
 
 </div>
 
 ---
 
-## 📖 Overview
+## Overview
 
-This project transforms a basic uptime monitoring concept into a fully containerised, Kubernetes-native stack with a local CI/CD pipeline — all running on your own machine with no cloud account needed.
+This project builds a fully containerised uptime monitoring stack on a local Kubernetes cluster with a working CI/CD pipeline — all running on your laptop with no cloud account.
 
-**What gets built:**
+**What gets built across 4 sprints:**
 
-- A **Flask API** (`/health`, `/echo`) containerised with multi-stage Docker builds, running as non-root
-- An **Nginx edge proxy** with custom access logs tracking `$request_time`
-- A **PostgreSQL StatefulSet** with primary + replica streaming replication
-- **Three CronJobs** — metrics writer, log parser, SLO alert checker
-- A **kind cluster** (2 nodes) with Ingress-Nginx, cert-manager TLS, HPA, RBAC, and NetworkPolicies
-- A **Jenkins pipeline** (in Docker) that lints → tests → builds → scans → pushes → deploys → smoke tests → auto-rollbacks on failure
-- **Kyverno policy gates** denying pods without non-root context or resource limits
-- A **blue/green deployment** script for zero-downtime rollouts
-
----
-
-## ⚡ Quick Start
-
-```bash
-# 1. Clone
-git clone https://github.com/<YOUR_USERNAME>/zero-to-prod-k8s.git
-cd zero-to-prod-k8s
-
-# 2. Copy and fill in secrets
-cp .env.example .env
-# Edit .env — set a strong POSTGRES_PASSWORD
-
-# 3. Spin up the full stack (cluster + registry + deploy)
-make all
-
-# 4. Test it
-curl -k https://uptime.local/health
-# → {"status":"ok","version":"..."}
-```
-
-> **First run takes ~5 minutes** — kind downloads images, cert-manager spins up, pods become ready.
+- **Flask API** — `/health` and `/echo` endpoints, multi-stage Docker build, non-root UID 10001, graceful SIGTERM shutdown
+- **Nginx edge proxy** — custom access logs with `$request_time`, proxies to Flask
+- **PostgreSQL StatefulSet** — primary + streaming replica, PVC-backed storage, auto-bootstrapped via env vars
+- **Three CronJobs** — metrics writer (every 5 min), Nginx log parser (daily), SLO alert checker (every 15 min)
+- **kind cluster** — 2 nodes, ingress-nginx, cert-manager TLS, HPA (1→3 replicas), RBAC, NetworkPolicies
+- **Jenkins pipeline** — 8 stages: lint → test → build → scan → push → deploy → smoke → auto-rollback
+- **Kyverno policy gate** — blocks pods missing non-root context or resource limits at admission
+- **Blue/green deployment** — slot-based zero-downtime rollout script
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
 ```
-                        ┌─────────────────────────────────────────────┐
-                        │           kind cluster (uptime-dev)          │
-                        │                                              │
-  Browser / curl        │  ┌──────────────┐     ┌──────────────────┐  │
-       │                │  │  ingress-    │     │   cert-manager   │  │
-       │  HTTPS         │  │  nginx       │     │  (SelfSigned TLS)│  │
-       └───────────────►│  │  :443        │     └──────────────────┘  │
-                        │  └──────┬───────┘                           │
-                        │         │ /app/*                            │
-                        │  ┌──────▼───────┐     ┌──────────────────┐  │
-                        │  │  Flask App   │────►│   PostgreSQL     │  │
-                        │  │  (HPA 1-3)   │     │   StatefulSet    │  │
-                        │  └──────────────┘     │  primary+replica │  │
-                        │                       └──────────────────┘  │
-                        │  CronJobs:  metrics-job  log-parser  alerts  │
-                        └─────────────────────────────────────────────┘
-                                          ▲
-                        ┌─────────────────┴───────────────────────────┐
-                        │         Jenkins CI/CD (Docker)               │
-                        │  lint→test→build→scan→push→deploy→smoke      │
-                        │              localhost:8090                   │
-                        └─────────────────────────────────────────────┘
-                                          ▲
-                        ┌─────────────────┴───────────────────────────┐
-                        │       Local Registry  (localhost:5001)       │
-                        └─────────────────────────────────────────────┘
+  Browser / curl
+       │ HTTPS
+       ▼
+  ┌─────────────────────────────────────────────────┐
+  │          kind cluster  (uptime-dev ns)           │
+  │                                                  │
+  │  ingress-nginx ──► Flask App (HPA: 1-3 pods)    │
+  │  cert-manager TLS        │                       │
+  │                          ▼                       │
+  │                   PostgreSQL StatefulSet         │
+  │                   postgres-0 (primary)           │
+  │                   postgres-1 (replica)           │
+  │                                                  │
+  │  CronJobs:  metrics-job  log-parser  alerts      │
+  │  RBAC:      app-sa  db-sa  jobs-sa               │
+  │  NetPol:    default-deny + explicit allow rules  │
+  │  PDB:       minAvailable: 1  (app + db)          │
+  │  Kyverno:   enforce non-root + resource limits   │
+  └─────────────────────────────────────────────────┘
+            ▲
+  ┌─────────┴───────────────────────────────────────┐
+  │   Jenkins  (Docker, localhost:8090)              │
+  │   lint→test→build→scan→push→deploy→smoke         │
+  │   auto-rollback on pipeline failure              │
+  └─────────────────────────────────────────────────┘
+            ▲
+  ┌─────────┴───────────────────────────────────────┐
+  │   Local Registry  (localhost:5001)               │
+  │   Images: localhost:5001/uptime/<name>:tag       │
+  └─────────────────────────────────────────────────┘
 ```
-
-### Components
-
-| Component | Technology | Purpose |
-|---|---|---|
-| **edge** | Nginx 1.27-alpine | Reverse proxy, TLS termination, access logs |
-| **app** | Flask + Gunicorn | REST API — `/health`, `/echo` |
-| **db** | PostgreSQL 16 | Primary + streaming replica, PVC-backed |
-| **metrics-job** | Python 3.12 CronJob | Polls `/health`, writes to Postgres every 5 min |
-| **log-parser** | Python 3.12 CronJob | Parses Nginx logs → daily CSV (00:00 UTC) |
-| **alerts** | Alpine bash CronJob | Checks SLO breach, POSTs to webhook (every 15 min) |
-| **registry** | registry:2 | Local container registry on port 5001 |
-| **ci** | Jenkins LTS | Pipeline-as-code, auto-rollback on failure |
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 zero-to-prod-k8s/
-├── app/                        # Flask application
-│   ├── Dockerfile              # Multi-stage: builder (tests) → slim runtime
+├── app/                          # Flask application
+│   ├── Dockerfile                # Multi-stage: builder (runs pytest) → slim runtime
 │   └── src/
-│       ├── main.py             # Flask routes + SIGTERM handler
-│       ├── test_main.py        # Pytest unit tests (run inside Docker build)
-│       ├── requirements.txt    # flask, gunicorn
-│       └── requirements-dev.txt# pytest, pytest-cov
+│       ├── main.py               # /health, /echo routes + SIGTERM handler
+│       ├── test_main.py          # Pytest tests (run inside Docker build stage)
+│       ├── requirements.txt      # flask==3.0.3, gunicorn==22.0.0
+│       └── requirements-dev.txt  # pytest==8.2.2, pytest-cov==5.0.0
 │
-├── edge/                       # Nginx edge proxy
+├── edge/                         # Nginx reverse proxy
 │   ├── Dockerfile
-│   └── nginx.conf              # Custom log format with $request_time
+│   └── nginx.conf                # Custom log_format with $request_time
 │
 ├── jobs/
-│   ├── metrics/                # Healthcheck → Postgres CronJob
+│   ├── metrics/                  # Polls /health → writes to Postgres (every 5m)
 │   │   ├── Dockerfile
 │   │   ├── healthcheck.py
 │   │   └── requirements.txt
-│   ├── log-parser/             # Nginx log → CSV CronJob
+│   ├── log-parser/               # Parses Nginx access.log → daily CSV
 │   │   ├── Dockerfile
 │   │   └── parse.py
-│   └── alerts/                 # SLO breach alerter CronJob
+│   └── alerts/                   # SLO breach → webhook (every 15m)
 │       ├── Dockerfile
 │       └── alert.sh
 │
 ├── k8s/
-│   ├── base/                   # Kustomize base manifests
+│   ├── base/                     # Kustomize base
 │   │   ├── namespace.yaml
-│   │   ├── app/                # Deployment, Service, HPA, PDB
-│   │   ├── edge/               # Deployment, Service, Ingress
-│   │   ├── db/                 # StatefulSet, Services (headless + ClusterIP)
-│   │   ├── jobs/               # CronJobs (metrics, log-parser, alerts)
-│   │   ├── rbac/               # ServiceAccounts, Roles, RoleBindings
-│   │   ├── netpol/             # NetworkPolicies (default-deny + allow rules)
-│   │   └── issuer/             # cert-manager SelfSigned ClusterIssuer
+│   │   ├── kustomization.yaml
+│   │   ├── app/                  # deployment.yaml, service.yaml, hpa.yaml, pdb.yaml
+│   │   ├── edge/                 # deployment.yaml, service.yaml, ingress.yaml
+│   │   ├── db/                   # statefulset.yaml, service.yaml
+│   │   ├── jobs/                 # cronjobs.yaml (all 3 jobs)
+│   │   ├── rbac/                 # rbac.yaml — SAs, Role, RoleBinding
+│   │   ├── netpol/               # networkpolicies.yaml
+│   │   └── issuer/               # selfsigned.yaml — ClusterIssuer + Certificate
 │   └── overlays/
-│       └── dev/                # Dev overlay (image tags, replica counts)
+│       └── dev/                  # kustomization.yaml — image tag overrides
 │
 ├── ci/
-│   ├── Jenkinsfile             # 8-stage pipeline-as-code
-│   └── docker-compose.ci.yml  # Jenkins + Docker socket mount
+│   ├── Jenkinsfile               # 8-stage pipeline with auto-rollback
+│   └── docker-compose.ci.yml     # Jenkins + docker.sock mount
 │
 ├── registry/
-│   └── compose.yml            # Local registry:2 on port 5001
+│   └── compose.yml               # registry:2 on localhost:5001
 │
 ├── scripts/
-│   ├── kind-up.sh             # Create cluster + install addons
-│   ├── connect-registry.sh    # Wire registry to kind network
-│   ├── load-secrets.sh        # Create K8s Secrets from .env
-│   ├── rollout.sh             # Blue/green deployment cutover
-│   └── smoke.sh               # Curl health check + latency assert
+│   ├── kind-up.sh                # Create 2-node cluster + install addons
+│   ├── connect-registry.sh       # Wire registry container to kind network
+│   ├── load-secrets.sh           # Create K8s Secrets from .env (idempotent)
+│   ├── rollout.sh                # Blue/green slot-based cutover
+│   └── smoke.sh                  # curl health + latency assert
 │
 ├── policies/
 │   └── kyverno/
-│       └── require-nonroot-limits.yaml  # Deny root pods + missing limits
+│       └── require-nonroot-limits.yaml   # Enforce: deny root + no-limits pods
 │
 ├── docs/
 │   ├── architecture.md
-│   ├── runbook.md             # Resilience drills + recovery procedures
+│   ├── runbook.md
 │   └── troubleshooting.md
 │
-├── docker-compose.yml         # Local dev stack (edge + app + db)
-├── Makefile                   # Top-level task runner
-├── .env.example               # Copy to .env and fill in secrets
-├── .hadolint.yaml             # Dockerfile linter config
-├── .kube-linter-config.yaml   # K8s manifest linter config
-└── .trivyignore               # CVE suppression list
+├── docker-compose.yml            # Local dev (no K8s needed)
+├── Makefile                      # Task runner
+├── .env.example                  # Copy → .env, never commit .env
+├── .hadolint.yaml                # Dockerfile linter config
+├── .kube-linter-config.yaml      # K8s manifest linter config
+└── .trivyignore                  # CVE suppression list
 ```
 
 ---
 
-## ✅ Prerequisites
-
-Install these tools before starting:
+## Prerequisites
 
 | Tool | Version | Install |
 |---|---|---|
-| Docker Desktop | 24+ | [docs.docker.com](https://docs.docker.com/get-docker/) |
-| kubectl | 1.30+ | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
+| Docker Desktop | 24+ | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/) |
+| kubectl | 1.30+ | [kubernetes.io/docs/tasks/tools](https://kubernetes.io/docs/tasks/tools/) |
 | kind | 0.23+ | `brew install kind` |
 | kustomize | 5+ | `brew install kustomize` |
 | git | any | [git-scm.com](https://git-scm.com/downloads) |
 | make | any | Pre-installed on Linux/Mac |
-| hey *(load tester)* | any | `go install github.com/rakyll/hey@latest` |
+| hey | any | `go install github.com/rakyll/hey@latest` |
+
+> **macOS users:** Disable **AirPlay Receiver** before starting — it occupies port 5000 which conflicts with the Flask container.
+> **System Settings → General → AirDrop & Handoff → AirPlay Receiver → OFF**
 
 Verify all tools:
 ```bash
@@ -203,295 +173,374 @@ docker --version && kubectl version --client && kind version && kustomize versio
 
 ---
 
-## 🔐 Environment Setup
+## Setup
+
+### 1. Clone the repo
 
 ```bash
-# Copy the example file
+git clone https://github.com/devish2/zero-to-prod-k8s.git
+cd zero-to-prod-k8s
+```
+
+### 2. Configure environment
+
+```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
+Edit `.env`:
 
 ```env
 POSTGRES_USER=uptime
-POSTGRES_PASSWORD=YourStrongPassword123!   # ← change this
+POSTGRES_PASSWORD=YourStrongPassword123!    # ← change this
 POSTGRES_DB=uptimedb
 WEBHOOK_URL=http://localhost:9000/hooks/alert
 SLO_THRESHOLD=99
 APP_PORT=5000
 ```
 
-> ⚠️ **Never commit `.env`** — it's in `.gitignore`. The `postgres:16-alpine` image reads these on first boot and auto-creates the user and database. See [How Postgres Setup Works](#how-postgres-setup-works) below.
+> **How Postgres bootstraps itself:** `postgres:16-alpine` reads `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` on first boot with an empty volume and auto-creates the user and database. No manual `psql` commands needed.
+>
+> In **docker compose** → values come from `.env`
+> In **Kubernetes** → values come from the `db-secret` Secret (created by `load-secrets.sh`)
+
+### 3. Local dev stack (Sprint 1 — no Kubernetes)
+
+```bash
+docker compose up --build -d
+
+curl http://localhost:5000/health
+# → {"status":"ok","version":"dev-compose"}
+
+curl http://localhost:8888/app/health
+# → {"status":"ok","version":"dev-compose"}
+```
+
+### 4. Full Kubernetes deploy (Sprint 2+)
+
+> ⚠️ Always run in this exact order — secrets must exist before pods start.
+
+```bash
+kubectl apply -f k8s/base/namespace.yaml   # 1. namespace first
+bash scripts/load-secrets.sh               # 2. secrets second
+kubectl apply -k k8s/overlays/dev          # 3. everything else
+
+# Add DNS entry for TLS ingress
+echo "127.0.0.1 uptime.local" | sudo tee -a /etc/hosts
+
+curl -k https://uptime.local/health
+# → {"status":"ok"}
+```
 
 ---
 
-## 🎯 Sprints
+## Sprints
 
-This project is structured as a 2-week, 4-sprint plan.
+### Sprint 1 — Docker Depth *(Days 1–4)*
 
-### Sprint 1 — Docker Depth
-
-**Goal:** Solid container builds, minimal images, non-root, healthchecks.
+Multi-stage builds, non-root containers, healthchecks, dev compose stack.
 
 ```bash
-# Local dev (no Kubernetes needed)
-docker compose up --build -d
-curl http://localhost:8080/app/health
-
-# Lint Dockerfiles
-make lint
-
-# Scan for CVEs (must be 0 CRITICAL)
-make scan
+docker compose up --build -d   # bring up edge + app + db
+make lint                       # hadolint all Dockerfiles
+make scan                       # Trivy CVE scan — must be 0 CRITICAL
+make test                       # run pytest inside Docker builder stage
 ```
 
 **Acceptance criteria:**
-- `docker images` shows app runtime < 150 MB
-- `trivy` reports 0 CRITICAL CVEs
-- `curl http://localhost:8080/app/health` returns `{"status":"ok"}`
+- App image < 150 MB
+- `trivy` → 0 CRITICAL CVEs
+- `curl http://localhost:8888/app/health` → `{"status":"ok"}`
 
 ---
 
-### Sprint 2 — Kubernetes Fundamentals
+### Sprint 2 — Kubernetes Fundamentals *(Days 5–8)*
 
-**Goal:** Cluster up, TLS Ingress, StatefulSet DB, probes, HPA, RBAC, NetworkPolicies.
+kind cluster, TLS Ingress, StatefulSet with streaming replication, HPA, RBAC, NetworkPolicies.
 
 ```bash
-# Create cluster + registry
-make cluster
+make cluster                    # kind cluster + registry + addons
+make push                       # build + push all images to localhost:5001
+make deploy                     # load secrets + kustomize apply
 
-# Build, push, and deploy
-make deploy
+# Verify Postgres replication
+kubectl exec -it postgres-0 -n uptime-dev -c postgres -- \
+  psql -U uptime -c 'SELECT pg_is_in_recovery();'
+# → f  (primary)
 
-# Add uptime.local to /etc/hosts
-echo "127.0.0.1 uptime.local" | sudo tee -a /etc/hosts
+kubectl exec -it postgres-1 -n uptime-dev -c postgres -- \
+  psql -U uptime -c 'SELECT pg_is_in_recovery();'
+# → t  (replica ✓)
 
-# Test TLS
-curl -k https://uptime.local/health
-
-# Verify Postgres replica
-kubectl exec -it postgres-1 -n uptime-dev -- \
-  psql -U uptime -c "SELECT pg_is_in_recovery();"
-# → t  (replica is in recovery mode ✓)
-
-# Load test — watch HPA scale
+# HPA load test
 hey -n 50000 -c 100 http://uptime.local/health &
 kubectl get hpa -n uptime-dev -w
 ```
 
 **Acceptance criteria:**
 - `kubectl get pods -n uptime-dev` → all `Running`
-- `kubectl describe ingress -n uptime-dev` shows TLS
-- `kubectl top pods` works; HPA scales 1 → 3 under load
-- Postgres replica reports `pg_is_in_recovery() = t`
+- `curl -k https://uptime.local/health` → `{"status":"ok"}`
+- Postgres replica: `pg_is_in_recovery() = t`
+- HPA scales 1 → 3 under load
 
 ---
 
-### Sprint 3 — Local CI/CD
+### Sprint 3 — Local CI/CD *(Days 9–12)*
 
-**Goal:** Pipeline builds, scans, pushes to local registry, deploys to K8s.
+Jenkins in Docker, 8-stage pipeline-as-code, auto-rollback on failure.
 
 ```bash
-# Start Jenkins
 make ci
-# Open http://localhost:8090 → paste initial admin password → setup
-
-# Get initial password
+# Get initial admin password
 docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+# Open http://localhost:8090 → paste password → Install suggested plugins
+# New Item → Pipeline → SCM: Git → Script Path: ci/Jenkinsfile
 ```
 
 **Pipeline stages:**
-
 ```
-lint → test → build → scan → push → deploy → smoke → [rollback on failure]
+lint → test → build → scan → push → deploy → smoke → rollback (on failure)
 ```
 
 **Acceptance criteria:**
-- Commit → Jenkins builds + deploys new tag
-- `kubectl rollout history deployment/app -n uptime-dev` shows multiple revisions
-- Bad image tag → rollback stage fires automatically
+- Commit → Jenkins builds + deploys new image tag
+- `kubectl rollout history deployment/app -n uptime-dev` shows revisions
+- Broken image → rollback stage fires automatically
 
 ---
 
-### Sprint 4 — Reliability & Policy 
+### Sprint 4 — Reliability & Policy *(Days 13–14)*
 
-**Goal:** PDB prevents outage during drain, Kyverno gate blocks bad manifests, blue/green with zero downtime.
+PodDisruptionBudgets, Kyverno policy gate, blue/green deploy, resilience drills.
 
 ```bash
-# Apply PodDisruptionBudgets + Kyverno
-kubectl apply -f k8s/base/app/pdb.yaml
-kubectl apply -f https://github.com/kyverno/kyverno/releases/download/v1.12.0/install.yaml
+# Install Kyverno (--server-side required for large CRDs)
+kubectl apply -f https://github.com/kyverno/kyverno/releases/download/v1.12.0/install.yaml \
+  --server-side
+
 kubectl apply -f policies/kyverno/require-nonroot-limits.yaml
 
-# Test Kyverno gate (should be denied)
-kubectl run bad-pod --image=nginx -n uptime-dev --dry-run=server
+# Test gate — must be denied ✓
+kubectl run bad-pod --image=nginx -n uptime-dev --dry-run=server 2>&1
+# → admission webhook "validate.kyverno.svc-fail" denied the request:
+#   check-nonroot: Pod must run as non-root
+#   check-limits:  All containers must have resource limits
 
 # Blue/green deploy
-bash scripts/rollout.sh <git-sha>
+bash scripts/rollout.sh $(git rev-parse --short HEAD)
 ```
 
 **Acceptance criteria:**
-- `kubectl drain` is blocked by PDB on the last pod
-- `kubectl run bad-pod --image=nginx` is denied by Kyverno
-- Blue/green cutover with no downtime (verify via continuous curl)
+- `kubectl drain` blocked by PDB on last pod
+- `kubectl run bad-pod --image=nginx` denied by Kyverno ✅
+- Blue/green cutover completes with zero dropped requests
 
 ---
 
-## 🛠 Makefile Reference
+## Common Errors & Fixes
+
+Real errors encountered while building this project.
+
+---
+
+### `yaml: unmarshal errors: mapping key already defined`
+**Cause:** Duplicate keys in `docker-compose.yml` — service names like `db`, `app`, `edge` appear more than once.
+**Fix:** Each service must appear exactly once. Replace the file with a clean version.
+
+---
+
+### `curl localhost:8080/app/health` returns HTML "Authentication required"
+**Cause:** Port 8080 is captured by Docker Desktop's built-in dashboard.
+**Fix:** Change edge host port to `8888` in `docker-compose.yml`:
+```yaml
+edge:
+  ports:
+    - "8888:80"
+```
+
+---
+
+### `Ports are not available: address already in use` on port 5000
+**Cause:** macOS AirPlay Receiver holds port 5000 via the `ControlCe` process.
+**Fix:** System Settings → General → AirDrop & Handoff → AirPlay Receiver → **OFF**
+
+---
+
+### `IndentationError: expected an indented block after function definition`
+**Cause:** Terminal heredoc pasting corrupted indentation in `test_main.py`.
+**Fix:** Verify syntax before building:
+```bash
+python3 -c "import ast; ast.parse(open('app/src/test_main.py').read()); print('✓ ok')"
+```
+
+---
+
+### `path config error; no 'name' field in node` (Kustomize)
+**Cause:** Inline YAML brace syntax breaks Kustomize's name-reference transformer.
+**Fix:** Always use expanded block style in all manifests:
+```yaml
+# ❌ breaks Kustomize
+metadata: { name: jobs-sa, namespace: uptime-dev }
+
+# ✅ works correctly
+metadata:
+  name: jobs-sa
+  namespace: uptime-dev
+```
+
+---
+
+### `Deployment: unknown field "containers"` (BadRequest)
+**Cause:** `containers`, `template`, `strategy` fields are at wrong nesting — placed directly under `spec` instead of `spec.template.spec`.
+**Fix:** Correct structure:
+```yaml
+spec:
+  template:
+    spec:
+      containers:     # ← must be here
+        - name: app
+```
+
+---
+
+### `secret "db-secret" not found` → `Init:CreateContainerConfigError`
+**Cause:** `kubectl apply -k` was run before `load-secrets.sh`.
+**Fix:** Always apply in this order:
+```bash
+kubectl apply -f k8s/base/namespace.yaml
+bash scripts/load-secrets.sh               # ← secrets before pods
+kubectl apply -k k8s/overlays/dev
+```
+
+---
+
+### `ImagePullBackOff` on app pod
+**Cause:** Image not pushed to local registry, or registry not connected to kind network.
+**Fix:**
+```bash
+docker compose -f registry/compose.yml up -d
+bash scripts/connect-registry.sh
+docker build -t localhost:5001/uptime/app:latest ./app
+docker push localhost:5001/uptime/app:latest
+kubectl delete pod -l app=flask-app -n uptime-dev
+```
+
+---
+
+### Kyverno install fails: `metadata.annotations: Too long: must have at most 262144 bytes`
+**Cause:** Kyverno v1.12.0 CRDs exceed the annotation size limit for standard `kubectl apply`.
+**Fix:** Use server-side apply:
+```bash
+kubectl apply -f https://github.com/kyverno/kyverno/releases/download/v1.12.0/install.yaml \
+  --server-side
+```
+
+---
+
+### `git push` rejected: `non-fast-forward`
+**Cause:** Remote has commits (e.g. auto-generated README) that local branch doesn't have.
+**Fix:**
+```bash
+git pull origin main --rebase
+git push origin main
+```
+
+---
+
+## Security Highlights
+
+| Concern | Implementation |
+|---|---|
+| Non-root containers | All images: `USER 10001`, `runAsNonRoot: true` in pod spec |
+| CVE scanning | Trivy on every build — pipeline fails on HIGH/CRITICAL |
+| Dockerfile linting | hadolint in CI lint stage |
+| Manifest linting | kube-linter in CI lint stage |
+| Network segmentation | Default-deny NetworkPolicy + explicit allow rules per flow |
+| Least-privilege RBAC | Dedicated ServiceAccounts, `automountServiceAccountToken: false` |
+| Secret management | K8s Secrets from `.env` via `load-secrets.sh` — never in git |
+| Admission policy | Kyverno `Enforce` — blocks root pods and pods without limits |
+| Availability | PodDisruptionBudget `minAvailable: 1` on app and db |
+
+---
+
+## Makefile Reference
 
 ```bash
-make all        # Full end-to-end: cluster + build + push + deploy + smoke
+make all        # Full setup: cluster + build + push + deploy + smoke
 make cluster    # Create kind cluster, start registry, install addons
 make build      # Build all 5 Docker images
-make push       # Build + push to localhost:5001
-make deploy     # Load secrets + push + apply kustomize overlay
-make smoke      # Run curl smoke tests against https://uptime.local/health
+make push       # Build + push all images to localhost:5001
+make deploy     # Load secrets + push + kustomize apply
+make smoke      # Smoke test https://uptime.local/health
 make lint       # hadolint (Dockerfiles) + kube-linter (manifests)
 make test       # Run pytest inside Docker builder stage
 make scan       # Trivy CVE scan on app image
-make ci         # Extract kubeconfig + start Jenkins compose stack
+make ci         # Export kubeconfig + start Jenkins stack
 make dev-up     # docker compose up (local dev, no K8s)
 make dev-down   # docker compose down
-make down       # Destroy cluster + registry + Jenkins
+make down       # Delete cluster + stop registry + stop Jenkins
 make clean      # Remove local images from localhost:5001
 ```
 
 ---
 
-## 🔒 Security Highlights
+## Resilience Drills
 
-| Concern | Mitigation |
-|---|---|
-| Container privileges | All containers run as UID 10001 (`runAsNonRoot: true`) |
-| Image vulnerabilities | Trivy scans every build — pipeline fails on HIGH/CRITICAL |
-| Dockerfile quality | hadolint lints every Dockerfile in CI |
-| K8s manifest quality | kube-linter checks all manifests in CI |
-| Network segmentation | Default-deny NetworkPolicy; only explicitly allowed traffic flows |
-| RBAC | Dedicated ServiceAccounts with least-privilege roles |
-| Secret management | K8s Secrets from `.env` via `load-secrets.sh` — never committed to git |
-| Policy gate | Kyverno `Enforce` mode blocks non-root or resource-limitless pods |
-
----
-
-## 🗄 How Postgres Setup Works
-
-Postgres is **not manually installed** — Docker handles it automatically.
-
-When `postgres:16-alpine` starts on an **empty volume** for the first time, it reads the three environment variables and bootstraps itself:
-
-```
-POSTGRES_USER     → CREATE USER uptime ...
-POSTGRES_PASSWORD → ALTER USER uptime PASSWORD '...'
-POSTGRES_DB       → CREATE DATABASE uptimedb OWNER uptime
-```
-
-**In dev (docker compose):** These come from your `.env` file.
-
-**In Kubernetes (Sprint 2+):** These come from the `db-secret` K8s Secret, created by `scripts/load-secrets.sh`.
+Full procedures in [`docs/runbook.md`](docs/runbook.md).
 
 ```bash
-# Connect to Postgres (dev)
-docker compose exec db psql -U uptime -d uptimedb
-
-# Connect to Postgres (Kubernetes)
-kubectl exec -it postgres-0 -n uptime-dev -- psql -U uptime -d uptimedb
-```
-
-> **Note:** If you change `POSTGRES_PASSWORD` after the data volume already exists, it won't take effect automatically. Either `docker compose down -v` to wipe and restart, or run `ALTER USER uptime PASSWORD 'new'` inside psql.
-
----
-
-## 🔥 Resilience Drills
-
-Documented in [`docs/runbook.md`](docs/runbook.md). Summary:
-
-```bash
-# Drill 1: Kill primary DB → replica stays read-only, primary recovers
+# Drill 1 — Kill primary DB, verify replica stays read-only
 kubectl delete pod postgres-0 -n uptime-dev
+kubectl exec -it postgres-1 -n uptime-dev -c postgres -- \
+  psql -U uptime -c 'SELECT pg_is_in_recovery();'
+# Expected: t
 
-# Drill 2: PDB prevents full app outage during node drain
+# Drill 2 — PDB prevents full drain outage
+kubectl scale deployment/app --replicas=2 -n uptime-dev
 kubectl drain <worker-node> --ignore-daemonsets --delete-emptydir-data
+# Expected: "Cannot evict pod — would violate PodDisruptionBudget"
+kubectl uncordon <worker-node>
 
-# Drill 3: HPA load test
+# Drill 3 — HPA scales under load
 hey -n 100000 -c 200 http://uptime.local/health &
 kubectl get hpa -n uptime-dev -w
+# Expected: REPLICAS 1 → 3
 
-# Drill 4: Bad image → pipeline auto-rollback
-kubectl set image deployment/app app=localhost:5001/uptime/app:broken -n uptime-dev
-kubectl rollout history deployment/app -n uptime-dev
+# Drill 4 — Kyverno gate test
+kubectl run bad-pod --image=nginx -n uptime-dev --dry-run=server 2>&1
+# Expected: denied — check-nonroot + check-limits
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Connecting to Postgres
 
-**Pods stuck in `ImagePullBackOff`**
 ```bash
-# Check registry is connected to kind
-bash scripts/connect-registry.sh
-# Verify image exists in registry
-curl http://localhost:5001/v2/uptime/app/tags/list
+# Local dev (docker compose)
+docker compose exec db psql -U uptime -d uptimedb
+
+# Kubernetes — primary
+kubectl exec -it postgres-0 -n uptime-dev -c postgres -- psql -U uptime -d uptimedb
+
+# Kubernetes — replica
+kubectl exec -it postgres-1 -n uptime-dev -c postgres -- psql -U uptime -d uptimedb
+
+# Useful queries
+SELECT current_user, current_database();
+SELECT pg_is_in_recovery();             -- f on primary, t on replica
+SELECT * FROM checks ORDER BY ts DESC LIMIT 10;
 ```
 
-**cert-manager Certificate not Ready**
-```bash
-kubectl describe certificate uptime-tls -n uptime-dev
-kubectl get challenges -n uptime-dev
-# SelfSigned issuer should resolve immediately — if stuck, delete and re-apply
-kubectl delete certificate uptime-tls -n uptime-dev
-kubectl apply -f k8s/base/issuer/selfsigned.yaml
-```
-
-**HPA shows `<unknown>` for CPU**
-```bash
-# metrics-server needs --kubelet-insecure-tls for kind
-kubectl patch deployment metrics-server -n kube-system --type=json \
-  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
-```
-
-**Postgres replica not syncing**
-```bash
-# Check initContainer logs
-kubectl logs postgres-1 -n uptime-dev -c init-replica
-# Verify primary is accepting connections
-kubectl exec postgres-0 -n uptime-dev -- pg_isready -U uptime
-```
-
-**Jenkins can't reach cluster**
-```bash
-# Regenerate kubeconfig with Docker host IP
-kind get kubeconfig --name uptime-dev > kubeconfig-ci
-sed -i.bak 's/127.0.0.1/host.docker.internal/g' kubeconfig-ci
-```
-
-Full troubleshooting guide: [`docs/troubleshooting.md`](docs/troubleshooting.md)
+> If you change `POSTGRES_PASSWORD` after the data volume already exists, either run `docker compose down -v` to reinitialise, or change it manually inside psql: `ALTER USER uptime PASSWORD 'newpassword';`
 
 ---
 
-## 📚 Key Concepts Practised
+## Author
 
-- **Multi-stage Docker builds** — separate builder and runtime stages; tests run inside the build
-- **Non-root containers** — UID 10001 in all images; `runAsNonRoot: true` in pod specs
-- **Kubernetes probes** — readiness vs liveness; `preStop` hooks for graceful drain
-- **StatefulSets** — headless Services, stable DNS names, `initContainers` for replica bootstrap
-- **Kustomize** — base + overlay pattern; `kustomize edit set image` in CI
-- **HPA** — CPU-based autoscaling with `stabilizationWindowSeconds` to prevent thrashing
-- **RBAC** — least-privilege ServiceAccounts; `automountServiceAccountToken: false`
-- **NetworkPolicies** — default-deny namespace; explicit allow rules per flow
-- **PodDisruptionBudgets** — `minAvailable: 1` to survive voluntary disruptions
-- **Blue/green deployments** — slot-based label switching; rollback without downtime
-- **Pipeline-as-code** — `Jenkinsfile` with parallel stages and `post { failure }` rollback hook
-
----
-
-## 👤 Author
-
-**Devesh Raj**
+**Devesh Raj** · [github.com/devish2](https://github.com/devish2)
 
 ---
 
 <div align="center">
-
-*Built entirely offline · No cloud account required · Runs on your laptop*
-
+<sub>Runs entirely on your laptop &nbsp;·&nbsp; No cloud account &nbsp;·&nbsp; No paid services</sub>
 </div>
