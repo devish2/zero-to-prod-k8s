@@ -1,0 +1,19 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+name: app-pdb
+namespace: uptime-dev
+spec:
+minAvailable: 1
+selector:
+matchLabels: { app: flask-app }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+name: db-pdb
+namespace: uptime-dev
+spec:
+minAvailable: 1
+selector:
+matchLabels: { app: postgres }

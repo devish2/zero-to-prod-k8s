@@ -1,0 +1,30 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-nonroot-and-limits
+  annotations:
+    policies.kyverno.io/description: Deny pods without non-root securityContext or resource limits
+spec:
+  validationFailureAction: Enforce
+  rules:
+    - name: check-nonroot
+      match:
+        resources: {kinds: [Pod]}
+      validate:
+        message: "Pod must run as non-root"
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+    - name: check-limits
+      match:
+        resources: {kinds: [Pod]}
+      validate:
+        message: "All containers must have resource limits"
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
